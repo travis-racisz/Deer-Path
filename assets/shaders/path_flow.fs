@@ -1,36 +1,30 @@
-#version 330
+precision highp float;
 
 // Input vertex attributes (from vertex shader)
-in vec2 fragTexCoord;
-in vec4 fragColor;
-
-// Output fragment color
-out vec4 finalColor;
+varying vec2 fragTexCoord;
+varying vec4 fragColor;
 
 // Uniform inputs
 uniform float time;
-uniform vec2 resolution;
+uniform sampler2D texture0;
 
 void main() {
-    // Base path color
-    vec4 pathColor = vec4(0.0, 0.8, 0.8, 1.0);
+    // Parameters for distortion effect
+    float distortionAmount = 0.04;
+    float distortionSpeed = 3.0;
     
-    // Add flowing highlight
-    float flowSpeed = 1.0;
-    float flowWidth = 0.4;
-    float flowPos = mod(time * flowSpeed, 2.0) - 1.0;
+    // Calculate distortion offset
+    vec2 distortion = vec2(
+        sin(fragTexCoord.y * 10.0 + time * distortionSpeed) * distortionAmount,
+        sin(fragTexCoord.x * 10.0 + time * distortionSpeed) * distortionAmount
+    );
     
-    // Calculate distance from flow center line
-    float xCoord = fragTexCoord.x;
-    float distFromFlow = abs(xCoord - flowPos);
+    // Sample texture with distortion
+    vec4 texColor = texture2D(texture0, fragTexCoord + distortion);
     
-    // Create flowing highlight effect
-    float highlightIntensity = 1.0 - smoothstep(0.0, flowWidth, distFromFlow);
-    vec4 highlightColor = vec4(1.0, 1.0, 0.5, 1.0);
-    
-    // Mix base color with highlight
-    vec4 finalPathColor = mix(pathColor, highlightColor, highlightIntensity * 0.9);
+    // Add heat haze color tint (slight orange/yellow)
+    vec4 heatTint = vec4(1.0, 0.9, 0.7, 1.0);
     
     // Output final color
-    finalColor = finalPathColor * fragColor;
+    gl_FragColor = texColor * fragColor * heatTint;
 }

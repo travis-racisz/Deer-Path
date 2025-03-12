@@ -1,11 +1,8 @@
-#version 330
+precision highp float;
 
 // Input vertex attributes (from vertex shader)
-in vec2 fragTexCoord;
-in vec4 fragColor;
-
-// Output fragment color
-out vec4 finalColor;
+varying vec2 fragTexCoord;
+varying vec4 fragColor;
 
 // Uniform inputs
 uniform float time;
@@ -23,11 +20,11 @@ void main() {
     );
     
     // Sample texture with distortion
-    vec4 texColor = texture(texture0, fragTexCoord + distortion);
+    vec4 texColor = texture2D(texture0, fragTexCoord + distortion);
     
     // Add heat haze color tint (slight orange/yellow)
     vec4 heatTint = vec4(1.0, 0.9, 0.7, 1.0);
     
     // Output final color
-    finalColor = texColor * fragColor * heatTint;
+    gl_FragColor = texColor * fragColor * heatTint;
 }
