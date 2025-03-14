@@ -52,7 +52,7 @@ fire_animation_timer: f32 = 0
 fire_animation_speed: f32 = 0.1
 fire_animation_frame: int = 0
 sprite_assets: SpriteAssets
-placed_path_tiles: [dynamic]PathTile // Tiles as placed by player
+placed_path_tiles: [dynamic]PathTile
 movement_path: [dynamic]PathTile
 is_path_valid: bool = false
 ripple_shader: rl.Shader
@@ -1076,8 +1076,6 @@ validate_path :: proc() {
 	end_row := int(level[current_level].end_position.y)
 	end_col := int(level[current_level].end_position.x)
 
-	// Debug
-	fmt.println("Validating path with start position:", start_row, start_col)
 
 	start_connected := false
 	for tile in placed_path_tiles {
@@ -1106,8 +1104,10 @@ init_player :: proc() {
 	current_path_index = 0
 	is_animating = false
 	animation_done = false
+	free_all()
 }
 start_animation :: proc() {
+	fmt.println("STARTING ANIMATION")
 	if is_path_valid && !is_animating && !animation_done {
 		start_row := int(level[current_level].start_position.y)
 		start_col := int(level[current_level].start_position.x)
@@ -1156,6 +1156,7 @@ get_next_target :: proc() -> bool {
 
 animate_player :: proc() {
 	if !is_animating || game_over {
+		free(&movement_path)
 		return
 	}
 
@@ -1363,7 +1364,7 @@ get_level :: proc(level_number: int) -> Level {
 			available_resources = {
 				path_tiles = 20,
 				dirt_tiles = 5,
-				hunting_ground = 0,
+				hunting_ground = 1,
 				bridge_tiles = 0,
 			},
 			level_name = "Hug the Corners!",
@@ -1463,7 +1464,7 @@ get_level :: proc(level_number: int) -> Level {
 		},
 		{
 			grid = [10][10]TileType {
-				{.Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Fire},
+				{.Fire, .Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Fire},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
@@ -1497,7 +1498,7 @@ get_level :: proc(level_number: int) -> Level {
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 			},
 			start_position = {4, 4},
-			end_position = {9, 5},
+			end_position = {9, 8},
 			available_resources = {
 				path_tiles = 8,
 				dirt_tiles = 3,
