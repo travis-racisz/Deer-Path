@@ -11,13 +11,13 @@ uniform vec2 resolution;
 uniform float time;
 
 const float scanlineIntensity = 0.3;
-const float scanlineCount = 300.0;
+const float scanlineCount = 800.0;
 const float vignetteStrength = 0.4;
-const float distortionStrength = 0.02;
+const float distortionStrength = 0.05;
 const float rgbOffsetStrength = 0.0009;
-const float flickerStrength = 0.001;
+const float flickerStrength = 0.01;
 const float noiseStrength = 0.04;
-const float brightness = 1.2;
+const float brightness = 1.4;
 const float contrast = .8;
 
 float random(vec2 st) {

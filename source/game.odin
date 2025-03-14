@@ -11,6 +11,14 @@ import "core:math"
 import rl "vendor:raylib"
 
 
+//SCREEN SIZE THANGS 
+scaling_factor: f32 = 1.0
+base_tile_size: i32 = 64
+min_tile_size: i32 = 32
+
+// AUDIO
+audio_init := false
+game_music: rl.Music
 // GLOBALS
 run: bool
 texture: rl.Texture
@@ -33,7 +41,7 @@ current_turn: int = 0
 game_over: bool = false
 game_over_reason: string = ""
 player_won: bool = false
-fire_spread_chance: f32 = 0.2 // Chance for fire to spread each turn
+fire_spread_chance: f32 = 0.1 // Chance for fire to spread each turn
 turn_delay_timer: f32 = 0
 turn_delay_duration: f32 = 0.15
 move_in_progress: bool = false
@@ -57,8 +65,13 @@ frame_delay := 400
 frame_counter := 0
 // -----------------------------------
 TILE_SIZE :: 64
+LEVEL_COUNT :: 6
 offset_x := f32(rl.GetScreenWidth() / 2 + TILE_SIZE * 10)
 offset_y := f32(rl.GetScreenHeight() / 2 - TILE_SIZE)
+
+
+// TODO: Figure out why the path only traces from {0,0}
+
 
 // TODO: Add tutorial for the player to click through on the first level
 // make it skipable 
@@ -89,6 +102,8 @@ SpriteAssets :: struct {
 	dirt:           rl.Texture,
 	end:            rl.Texture,
 	start:          rl.Texture,
+	predator:       rl.Texture,
+	hunting_ground: rl.Texture,
 }
 
 Level :: struct {
@@ -126,8 +141,6 @@ ResourceSet :: struct {
 	bridge_tiles:   i32,
 	hunting_ground: i32,
 }
-
-LEVEL_COUNT :: 4
 
 
 GameState :: enum {
@@ -214,7 +227,7 @@ init_tutorial :: proc() {
 	clear_dynamic_array(&tutorial.steps)
 	tutorial.active = true
 	tutorial.current_step = 0
-	tutorial.overlay_opacity = 0.2
+	tutorial.overlay_opacity = 0.0
 	tutorial.highlight_size = 5.0
 	tutorial.pulse_timer = 0.0
 
@@ -236,8 +249,8 @@ init_tutorial :: proc() {
 		TutorialStep {
 			message = "This is the Start. Your goal is to guide the deer to safely from the start position to the end goal.",
 			target_area = {
-				f32(level[current_level].start_position.x * TILE_SIZE + offset_x - 32),
-				f32(level[current_level].start_position.y * TILE_SIZE - offset_y - 32),
+				f32(level[tutorial_level_inx].start_position.x * TILE_SIZE + offset_x - 32),
+				f32(level[tutorial_level_inx].start_position.y * TILE_SIZE - offset_y - 32),
 				128,
 				128,
 			},
@@ -253,8 +266,8 @@ init_tutorial :: proc() {
 		TutorialStep {
 			message = "This is the end goal. The deer needs to reach this point.",
 			target_area = {
-				f32(level[current_level].end_position.x * TILE_SIZE + offset_x - 32),
-				f32(level[current_level].end_position.y * TILE_SIZE - offset_y - 32),
+				f32(level[tutorial_level_inx].end_position.x * TILE_SIZE + offset_x - 32),
+				f32(level[tutorial_level_inx].end_position.y * TILE_SIZE - offset_y - 32),
 				128,
 				128,
 			},
@@ -292,11 +305,23 @@ init_tutorial :: proc() {
 	append(
 		&tutorial.steps,
 		TutorialStep {
-			message = "Now click on the grid to place path tiles. Create a path from start to end.",
+			message = "Now click on the grid to place path tiles. Create a path from start to end. Diaganol Path squares are not valid",
 			target_area = {f32(offset_x), f32(-offset_y), 640, 640},
 			highlight = true,
 			wait_for_input = false,
 			input_type = .None,
+			completed = false,
+		},
+	)
+
+	append(
+		&tutorial.steps,
+		TutorialStep {
+			message = "This Indicator will tell you if your path is valid or not",
+			target_area = {20, 720, 180, 50},
+			highlight = true,
+			wait_for_input = true,
+			input_type = .Any,
 			completed = false,
 		},
 	)
@@ -310,6 +335,18 @@ init_tutorial :: proc() {
 			wait_for_input = true,
 			input_type     = .Any,
 			completed      = false,
+		},
+	)
+
+	append(
+		&tutorial.steps,
+		TutorialStep {
+			message = "Place some Dirt Tiles around the fire to prevent it from spreading",
+			target_area = {50, 330, 50, 50},
+			highlight = true,
+			wait_for_input = true,
+			input_type = .Any,
+			completed = false,
 		},
 	)
 
@@ -338,10 +375,16 @@ init_tutorial :: proc() {
 		},
 	)
 }
-
+tutorial_level_inx := 1
 update_tutorial :: proc() {
 	if !tutorial.active || tutorial.current_step >= len(tutorial.steps) {
 		return
+	}
+
+
+	if rl.IsKeyPressed(.ESCAPE) {
+		current_game_state = .Title_Screen
+
 	}
 
 	// Update pulse effect for highlights
@@ -352,12 +395,12 @@ update_tutorial :: proc() {
 	current := &tutorial.steps[tutorial.current_step]
 
 	// For fire tile tutorial step
-	if tutorial.current_step == 6 {
+	if tutorial.current_step == 7 {
 		// Find a fire tile to highlight
 		found_fire := false
 		for row in 0 ..< 10 {
 			for col in 0 ..< 10 {
-				if level[current_level].grid[row][col] == .Fire {
+				if level[tutorial_level_inx].grid[row][col] == .Fire {
 					current.target_area = {
 						f32(col * TILE_SIZE + int(offset_x) - 16),
 						f32(row * TILE_SIZE - int(offset_y) - 16),
@@ -393,7 +436,6 @@ update_tutorial :: proc() {
 			}
 		}
 	} else {
-		// For the path building step, check if a valid path has been created
 		if tutorial.current_step == 5 && is_path_valid {
 			current.completed = true
 			tutorial.current_step += 1
@@ -401,7 +443,6 @@ update_tutorial :: proc() {
 	}
 }
 
-// Draw tutorial overlays and messages
 draw_tutorial :: proc() {
 	if !tutorial.active || tutorial.current_step >= len(tutorial.steps) {
 		return
@@ -409,25 +450,13 @@ draw_tutorial :: proc() {
 
 	current := tutorial.steps[tutorial.current_step]
 
-	// Draw darkened overlay for everything except highlighted area
-	rl.DrawRectangle(
-		0,
-		0,
-		screen_width,
-		screen_height,
-		{0, 0, 0, u8(tutorial.overlay_opacity * 180)},
-	)
 
-	// Draw highlighted area
 	if current.highlight {
-		// Calculate pulse effect
 		pulse_amount := math.sin_f32(tutorial.pulse_timer * 4.0) * 10.0
 		highlight_rect := current.target_area
 
-		// Clear the highlight area
 		rl.DrawRectangleRec(highlight_rect, {0, 0, 0, 0})
 
-		// Draw a pulsing border around the highlight area
 		rl.DrawRectangleLinesEx(
 			{
 				highlight_rect.x - pulse_amount,
@@ -440,11 +469,10 @@ draw_tutorial :: proc() {
 		)
 	}
 
-	// Draw message box
-	message_width: i32 = 200
+	message_width: i32 = 400
 	message_height := 100
-	message_x := (screen_width - message_width) / 2
-	message_y := screen_height - i32(message_height - 50)
+	message_x := (screen_width / 2) - message_width / 2
+	message_y := screen_height - 250
 
 	rl.DrawRectangleRounded(
 		{f32(message_x), f32(message_y), f32(message_width), f32(message_height)},
@@ -459,17 +487,16 @@ draw_tutorial :: proc() {
 		rl.Color{255, 255, 255, 200},
 	)
 
-	// Draw message text with word wrapping
+
 	rl.DrawText(
 		strings.clone_to_cstring(tutorial.steps[tutorial.current_step].message),
-		500,
-		500,
-		20,
+		220,
+		30,
+		25,
 		rl.WHITE,
 	)
 
 
-	// Draw continue prompt
 	if current.wait_for_input {
 		prompt_text: string
 		#partial switch current.input_type {
@@ -478,7 +505,7 @@ draw_tutorial :: proc() {
 		case .Key:
 			prompt_text = fmt.tprintf("Press %v to continue", current.key)
 		case .Any:
-			prompt_text = "Press any key or click to continue"
+			prompt_text = "Press Enter or click to continue"
 		}
 
 		rl.DrawText(
@@ -486,7 +513,7 @@ draw_tutorial :: proc() {
 			message_x +
 			message_width / 2 -
 			rl.MeasureText(strings.clone_to_cstring(prompt_text), 16) / 2,
-			message_y + i32(message_height - 30),
+			i32(message_y) + i32(message_height - 60),
 			16,
 			{255, 255, 150, 255},
 		)
@@ -509,21 +536,15 @@ update_and_draw_tile_effects :: proc() {
 		if elapsed > tile_placement_anim.duration {
 			tile_placement_anim.active = false
 		} else {
-			// Normalize time to 0-1 range
 			normalized_time := elapsed / tile_placement_anim.duration
 
-			// Debug info
-			fmt.println("Effect active - Time:", normalized_time)
 
-			// Use shader-specific uniform locations
 			rl.SetShaderValue(
 				shaders.tile_placement,
 				shaders.tile_time_loc,
 				&normalized_time,
 				.FLOAT,
 			)
-
-			// Draw effect without all the other parameters for now
 
 
 		}
@@ -549,55 +570,44 @@ init_shaders :: proc() {
 	)
 	resolution := [2]f32{f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())}
 
-	// If any shader ID is 0, the shader failed to load
 	if shaders.tile_placement.id == 0 {
 		fmt.println("ERROR: Tile placement shader failed to load")
 	}
 
-	// For path flow shader
 	shaders.path_flow_time_loc = rl.GetShaderLocation(shaders.path_flow, "time")
 	shaders.path_flow_resolution_loc = rl.GetShaderLocation(shaders.path_flow, "resolution")
 
 	time := rl.GetTime()
 	rl.SetShaderValue(ripple_shader, rl.GetShaderLocation(ripple_shader, "u_time"), &time, .FLOAT)
 
-	// Load CRT shader - use your new browser-compatible shader
 	shaders.crt_effect = rl.LoadShader(nil, "assets/shaders/crt_effect.fs")
 
-	// Get uniform locations for CRT shader
 	shaders.crt_resolution_loc = rl.GetShaderLocation(shaders.crt_effect, "resolution")
 	shaders.crt_time_loc = rl.GetShaderLocation(shaders.crt_effect, "time")
 	shaders.crt_texture0_loc = rl.GetShaderLocation(shaders.crt_effect, "texture0")
 
-	// Set initial values for CRT shader
 	rl.SetShaderValue(shaders.crt_effect, shaders.crt_resolution_loc, &resolution, .VEC2)
 	rl.SetShaderValue(shaders.crt_effect, shaders.crt_texture0_loc, &[1]i32{0}, .INT)
 
-	// For fire distortion shader
 	shaders.fire_time_loc = rl.GetShaderLocation(shaders.fire_distortion, "time")
 	shaders.fire_texture0_loc = rl.GetShaderLocation(shaders.fire_distortion, "texture0")
 
-	// For tile placement shader
 	shaders.tile_time_loc = rl.GetShaderLocation(shaders.tile_placement, "time")
 	shaders.tile_pos_loc = rl.GetShaderLocation(shaders.tile_placement, "tilePos")
 	shaders.tile_resolution_loc = rl.GetShaderLocation(shaders.tile_placement, "resolution")
 
 	shaders.trippy_background = rl.LoadShader(nil, "assets/shaders/trippy_background.fs")
 
-	// Get uniform locations for trippy background shader
 	shaders.trippy_time_loc = rl.GetShaderLocation(shaders.trippy_background, "time")
 	shaders.trippy_resolution_loc = rl.GetShaderLocation(shaders.trippy_background, "resolution")
 	shaders.trippy_texture0_loc = rl.GetShaderLocation(shaders.trippy_background, "texture0")
 
-	// Set initial values for trippy background shader
 	rl.SetShaderValue(shaders.trippy_background, shaders.trippy_resolution_loc, &resolution, .VEC2)
 	rl.SetShaderValue(shaders.trippy_background, shaders.trippy_texture0_loc, &[1]i32{0}, .INT)
 
-	// Set initial values
 	rl.SetShaderValue(shaders.path_flow, shaders.path_flow_resolution_loc, &resolution, .VEC2)
 }
 
-// Add this to your shutdown procedure
 unload_shaders :: proc() {
 	rl.UnloadShader(shaders.path_flow)
 	rl.UnloadShader(shaders.fire_distortion)
@@ -607,17 +617,15 @@ unload_shaders :: proc() {
 find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]PathTile {
 	result_path := make([dynamic]PathTile)
 
-	// Create a queue for BFS
+	fmt.println("Looking for path from", start_row, start_col, "to", end_row, end_col)
+
 	q: queue.Queue(PathTile)
 	queue.init(&q)
 
-	// Track visited tiles
 	visited: [10][10]bool
 
-	// Track parent tiles to reconstruct path
 	parent: [10][10]PathTile
 
-	// Start from the start position
 	start := PathTile {
 		row = start_row,
 		col = start_col,
@@ -625,16 +633,15 @@ find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]P
 	queue.push(&q, start)
 	visited[start_row][start_col] = true
 
-	// BFS to find path
 	found_path := false
 	for queue.len(q) > 0 && !found_path {
 		current := queue.pop_front(&q)
 
-		// Check if reached end
+
 		if current.row == end_row && current.col == end_col {
 			found_path = true
+			fmt.println("Found path to end!")
 
-			// Reconstruct path
 			path_tile := current
 			for path_tile.row != start_row || path_tile.col != start_col {
 				append(&result_path, path_tile)
@@ -642,7 +649,6 @@ find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]P
 			}
 			append(&result_path, start)
 
-			// Reverse path (from start to end)
 			for i, j := 0, len(result_path) - 1; i < j; i, j = i + 1, j - 1 {
 				result_path[i], result_path[j] = result_path[j], result_path[i]
 			}
@@ -650,30 +656,25 @@ find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]P
 			break
 		}
 
-		// Check adjacent tiles
 		directions := [][2]int{{0, 1}, {1, 0}, {0, -1}, {-1, 0}} // right, down, left, up
 
 		for dir in directions {
 			next_row := current.row + dir[0]
 			next_col := current.col + dir[1]
 
-			// Skip if out of bounds
 			if next_row < 0 || next_row >= 10 || next_col < 0 || next_col >= 10 {
 				continue
 			}
 
-			// Skip if already visited
 			if visited[next_row][next_col] {
 				continue
 			}
 
-			// Skip if not a path tile
 			if level[current_level].grid[next_row][next_col] != .Path &&
 			   !(next_row == end_row && next_col == end_col) {
 				continue
 			}
 
-			// Add to queue
 			next := PathTile {
 				row = next_row,
 				col = next_col,
@@ -684,14 +685,36 @@ find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]P
 		}
 	}
 
-	// Clean up
 	queue.destroy(&q)
+
+	if !found_path {
+		fmt.println("WARNING: No path found!")
+	} else {
+		fmt.println("Path length:", len(result_path))
+	}
 
 	return result_path
 }
 
-
 load_sprites :: proc() {
+
+	// load Gun sprite 
+	if gun_data, ok := read_entire_file("assets/Gun.png", context.temp_allocator); ok {
+		gun_img := rl.LoadImageFromMemory(".png", raw_data(gun_data), c.int(len(gun_data)))
+
+		sprite_assets.hunting_ground = rl.LoadTextureFromImage(gun_img)
+	}
+
+
+	// laod predator sprite 
+
+
+	if wolf_data, ok := read_entire_file("assets/wolf_black_full.png", context.temp_allocator);
+	   ok {
+		wolf_img := rl.LoadImageFromMemory(".png", raw_data(wolf_data), c.int(len(wolf_data)))
+
+		sprite_assets.predator = rl.LoadTextureFromImage(wolf_img)
+	}
 
 	// load start tile 
 
@@ -754,7 +777,6 @@ load_sprites :: proc() {
 	}
 
 
-	// load fire frames
 	for i in 0 ..< 8 {
 		filename := fmt.tprintf("assets/Fire 4_2-%d.png", i + 1)
 		if fire_data, ok := read_entire_file(filename, context.temp_allocator); ok {
@@ -772,6 +794,20 @@ unload_all_sprites :: proc() {
 	for i in 0 ..< 8 {
 		rl.UnloadTexture(sprite_assets.fire[i])
 	}
+
+	rl.UnloadTexture(sprite_assets.hunting_ground)
+	rl.UnloadTexture(sprite_assets.deer)
+
+	rl.UnloadTexture(sprite_assets.grass)
+	rl.UnloadTexture(sprite_assets.charred_ground)
+
+	rl.UnloadTexture(sprite_assets.end)
+
+	rl.UnloadTexture(sprite_assets.dirt)
+
+	rl.UnloadTexture(sprite_assets.start)
+
+	rl.UnloadTexture(sprite_assets.predator)
 }
 
 get_fire_texture :: proc() -> rl.Texture {
@@ -781,7 +817,6 @@ get_fire_texture :: proc() -> rl.Texture {
 update_animations :: proc() {
 	delta_time := rl.GetFrameTime()
 
-	// Update fire animation
 	fire_animation_timer += delta_time
 	if fire_animation_timer >= fire_animation_speed {
 		fire_animation_timer -= fire_animation_speed
@@ -789,13 +824,10 @@ update_animations :: proc() {
 	}
 }
 
-// Draw the title screen
 draw_title_screen :: proc() {
-	// Draw background
 	rl.ClearBackground({0, 100, 50, 255}) // Dark green background
 
-	// Draw game title
-	title_text := "Environmental Engineer"
+	title_text := "Deer Path"
 	rl.DrawText(
 		strings.clone_to_cstring(title_text),
 		screen_width / 2 - (rl.MeasureText(strings.clone_to_cstring(title_text), 80) / 2),
@@ -804,7 +836,6 @@ draw_title_screen :: proc() {
 		rl.WHITE,
 	)
 
-	// Draw subtitle
 	subtitle_text := "A Survival Journey"
 	rl.DrawText(
 		strings.clone_to_cstring(subtitle_text),
@@ -814,7 +845,6 @@ draw_title_screen :: proc() {
 		rl.WHITE,
 	)
 
-	// Draw start button
 	button_width := 200
 	button_height := 60
 	button_x := screen_width / 2 - i32(button_width / 2)
@@ -827,12 +857,10 @@ draw_title_screen :: proc() {
 		height = f32(button_height),
 	}
 
-	// Draw button background
 	button_color := rl.DARKGREEN
 	if rl.CheckCollisionPointRec(mouse_pos, button_rect) {
-		button_color = rl.GREEN // Highlight on hover
+		button_color = rl.GREEN
 
-		// Check if button is clicked
 		if rl.IsMouseButtonPressed(.LEFT) {
 			current_game_state = .Instructions_Screen
 		}
@@ -841,7 +869,6 @@ draw_title_screen :: proc() {
 	rl.DrawRectangleRec(button_rect, button_color)
 	rl.DrawRectangleLinesEx(button_rect, 2.0, rl.WHITE)
 
-	// Draw button text
 	start_text := "START"
 	rl.DrawText(
 		strings.clone_to_cstring(start_text),
@@ -853,23 +880,19 @@ draw_title_screen :: proc() {
 
 	draw_tutorial_button()
 
-	// Draw credits
 	credits_text := "Created for Odin Jam 2025"
 	rl.DrawText(
 		strings.clone_to_cstring(credits_text),
 		640 + rl.MeasureText(strings.clone_to_cstring(credits_text), 20) / 2,
-		650,
+		750,
 		20,
 		rl.WHITE,
 	)
 }
 
-// Draw the instructions screen
 draw_instructions_screen :: proc() {
-	// Draw background
 	rl.ClearBackground({0, 100, 50, 255}) // Dark green background
 
-	// Draw title
 	title_text := "HOW TO PLAY"
 	rl.DrawText(
 		strings.clone_to_cstring(title_text),
@@ -879,7 +902,6 @@ draw_instructions_screen :: proc() {
 		rl.WHITE,
 	)
 
-	// Draw instruction texts
 	instructions := []string {
 		"1. Build a path from the starting point to the end goal",
 		"2. Use your limited supply of path tiles wisely",
@@ -919,12 +941,10 @@ draw_instructions_screen :: proc() {
 		height = f32(button_height),
 	}
 
-	// Draw button background
 	button_color := rl.DARKGREEN
 	if rl.CheckCollisionPointRec(mouse_pos, button_rect) {
 		button_color = rl.GREEN // Highlight on hover
 
-		// Check if button is clicked
 		if rl.IsMouseButtonPressed(.LEFT) {
 			current_game_state = .Gameplay
 			init_game_state()
@@ -936,7 +956,6 @@ draw_instructions_screen :: proc() {
 	rl.DrawRectangleRec(button_rect, button_color)
 	rl.DrawRectangleLinesEx(button_rect, 2.0, rl.WHITE)
 
-	// Draw button text
 	start_text := "START GAME"
 	rl.DrawText(
 		strings.clone_to_cstring(start_text),
@@ -948,7 +967,6 @@ draw_instructions_screen :: proc() {
 }
 
 
-// Initialize the game state
 init_game_state :: proc() {
 	current_turn = 0
 	game_over = false
@@ -958,9 +976,7 @@ init_game_state :: proc() {
 }
 
 
-// Start the next movement
 start_next_move :: proc() {
-	// Save the starting position
 	previous_position = player_position
 	move_in_progress = true
 
@@ -992,23 +1008,18 @@ find_path_tile_index :: proc(row, col: int) -> int {
 }
 
 is_adjacent :: proc(row1, col1, row2, col2: int) -> bool {
-	// Check horizontal and vertical adjacency (not diagonal)
 	row_diff := abs(row1 - row2)
 	col_diff := abs(col1 - col2)
 
-	// Adjacent if exactly one coordinate differs by 1 and the other is the same
 	return (row_diff == 1 && col_diff == 0) || (row_diff == 0 && col_diff == 1)
 }
 
 is_path_continuous_and_reaches_end :: proc(start_row, start_col, end_row, end_col: int) -> bool {
-	// Track visited tiles
 	visited: [10][10]bool
 
-	// Initialize queue for BFS
 	q: queue.Queue(PathTile)
 	queue.init(&q)
 
-	// Start from first path tile adjacent to start position
 	for tile in placed_path_tiles {
 		if is_adjacent(tile.row, tile.col, start_row, start_col) {
 			queue.push(&q, tile)
@@ -1019,32 +1030,28 @@ is_path_continuous_and_reaches_end :: proc(start_row, start_col, end_row, end_co
 
 	if queue.len(q) == 0 {
 		queue.destroy(&q)
-		return false // No path tile adjacent to start
+		return false
 	}
 
-	// BFS to traverse the path
 	for queue.len(q) > 0 {
 		current := queue.pop_front(&q)
 
-		// Check if we've reached the end
 		if is_adjacent(current.row, current.col, end_row, end_col) {
 			queue.destroy(&q)
 			return true
 		}
 
-		// Check all adjacent path tiles
 		directions := [][2]int{{0, 1}, {1, 0}, {0, -1}, {-1, 0}} // right, down, left, up
 
 		for dir in directions {
 			next_row := current.row + dir[0]
 			next_col := current.col + dir[1]
 
-			// Check bounds
 			if next_row < 0 || next_row >= 10 || next_col < 0 || next_col >= 10 {
 				continue
 			}
 
-			// If it's a path tile and not visited yet
+
 			if level[current_level].grid[next_row][next_col] == .Path &&
 			   !visited[next_row][next_col] {
 				visited[next_row][next_col] = true
@@ -1054,7 +1061,7 @@ is_path_continuous_and_reaches_end :: proc(start_row, start_col, end_row, end_co
 	}
 
 	queue.destroy(&q)
-	return false // End not reachable through continuous path
+	return false
 }
 
 
@@ -1064,16 +1071,16 @@ validate_path :: proc() {
 		return
 	}
 
-	// Get start and end positions
-	start_row := int(level[current_level].start_position.y / TILE_SIZE)
-	start_col := int(level[current_level].start_position.x / TILE_SIZE)
+	start_row := int(level[current_level].start_position.y)
+	start_col := int(level[current_level].start_position.x)
 	end_row := int(level[current_level].end_position.y)
 	end_col := int(level[current_level].end_position.x)
 
-	// Check if the path connects to the start position
+	// Debug
+	fmt.println("Validating path with start position:", start_row, start_col)
+
 	start_connected := false
 	for tile in placed_path_tiles {
-		// Check if any path tile is adjacent to start
 		if is_adjacent(tile.row, tile.col, start_row, start_col) {
 			start_connected = true
 			break
@@ -1085,29 +1092,25 @@ validate_path :: proc() {
 		return
 	}
 
-	// Use BFS to check if the path is continuous and reaches the end
 	is_path_valid = is_path_continuous_and_reaches_end(start_row, start_col, end_row, end_col)
 }
-// Add this procedure to initialize the player position
-init_player :: proc() {
-	// Start at the level's start position
-	player_position = level[current_level].start_position
-	player_position.x = player_position.x * TILE_SIZE + offset_x // Adjust for grid rendering offset
-	player_position.y = player_position.y * TILE_SIZE - offset_y
 
-	// Initially, target position is the same as player position
+init_player :: proc() {
+	player_position = {
+		level[current_level].start_position.x * TILE_SIZE + offset_x,
+		level[current_level].start_position.y * TILE_SIZE - offset_y,
+	}
+
 	target_position = player_position
 
 	current_path_index = 0
 	is_animating = false
 	animation_done = false
 }
-
-
 start_animation :: proc() {
 	if is_path_valid && !is_animating && !animation_done {
-		start_row := int(level[current_level].start_position.y / TILE_SIZE)
-		start_col := int(level[current_level].start_position.x / TILE_SIZE)
+		start_row := int(level[current_level].start_position.y)
+		start_col := int(level[current_level].start_position.x)
 		end_row := int(level[current_level].end_position.y)
 		end_col := int(level[current_level].end_position.x)
 
@@ -1122,32 +1125,28 @@ start_animation :: proc() {
 			target_position.y = f32(movement_path[0].row * TILE_SIZE - int(offset_y))
 		}
 	}
-} // Reset the animation to allow replaying
+}
+
+
 reset_animation :: proc() {
 	init_player()
 }
 
-// Function to check if we've reached the target position
 reached_target :: proc() -> bool {
-	// Calculate distance between current position and target
 	dx := player_position.x - target_position.x
 	dy := player_position.y - target_position.y
 	distance := rl.Vector2Length(rl.Vector2{dx, dy})
 
-	// If we're close enough to the target, consider it reached
 	return distance < 2.0
 }
 
-// Get the next target position in the path
 get_next_target :: proc() -> bool {
 	if current_path_index < len(movement_path) {
-		// Move to the next path tile in the optimal path
 		target_position.x = f32(movement_path[current_path_index].col * TILE_SIZE + int(offset_x))
 		target_position.y = f32(movement_path[current_path_index].row * TILE_SIZE - int(offset_y))
 		current_path_index += 1
 		return true
 	} else {
-		// No more path tiles, move to the end position
 		target_position.x = f32(level[current_level].end_position.x * TILE_SIZE + offset_x)
 		target_position.y = f32(level[current_level].end_position.y * TILE_SIZE - offset_y)
 		return false
@@ -1162,43 +1161,34 @@ animate_player :: proc() {
 
 	delta_time := rl.GetFrameTime()
 
-	// If a move is in progress, animate the movement
 	if move_in_progress {
-		move_progress += delta_time * 2.0 // Control movement speed here
+		move_progress += delta_time * 2.0
 
 		if move_progress >= 1.0 {
-			// Move complete
 			move_progress = 1.0
 			move_in_progress = false
 			player_position = target_position
 
-			// Start the delay timer
 			turn_delay_timer = 0
 		} else {
-			// Interpolate position for smooth movement
 			start_pos := rl.Vector2{previous_position.x, previous_position.y}
 			end_pos := rl.Vector2{target_position.x, target_position.y}
 
-			// Use easing function for smoother movement
 			t := ease_out_cubic(move_progress)
 			player_position = linalg.lerp(start_pos, end_pos, t)
 		}
 	} else if reached_target() {
-		// We're at the target, wait for delay before next move
 		turn_delay_timer += delta_time
 
 		if turn_delay_timer >= turn_delay_duration {
-			// Process turn events after delay
 			process_turn_end()
 
-			// Check for game over conditions after turn processing
 			if game_over {
 				return
 			}
 
 			has_more_targets := get_next_target()
 
-			// If we've reached the end position and there are no more targets
 			if !has_more_targets && reached_target() {
 				is_animating = false
 				animation_done = true
@@ -1206,17 +1196,15 @@ animate_player :: proc() {
 				game_over = true
 				game_over_reason = "You've successfully reached the end!"
 				fmt.println("Player won! Level complete!")
+				free(&movement_path)
 			} else {
-				// Start the next movement
 				start_next_move()
 			}
 		}
 	} else {
-		// Start movement to target
 		start_next_move()
 	}
 
-	// Draw the player at its current position
 	draw_player()
 }
 
@@ -1253,31 +1241,6 @@ handle_animation_controls :: proc() {
 }
 
 
-highlight_path :: proc() {
-	// Update shader time uniform
-	shader_time := f32(rl.GetTime())
-	rl.SetShaderValue(shaders.path_flow, shaders.path_flow_time_loc, &shader_time, .FLOAT)
-
-	// Begin shader mode for path tiles
-	// rl.BeginShaderMode(shaders.path_flow)
-
-	for tile in placed_path_tiles {
-		x := tile.col * TILE_SIZE + int(offset_x)
-		y := tile.row * TILE_SIZE - int(offset_y)
-
-		// Draw path tile with shader
-		rl.DrawRectangle(i32(x), i32(y), TILE_SIZE, TILE_SIZE, rl.GREEN)
-	}
-
-	//rl.EndShaderMode()
-
-	// Draw outlines without shader
-	for tile in placed_path_tiles {
-		x := tile.col * TILE_SIZE + int(offset_x)
-		y := tile.row * TILE_SIZE - int(offset_y)
-		rl.DrawRectangleLines(i32(x), i32(y), TILE_SIZE, TILE_SIZE, rl.DARKGREEN)
-	}
-}
 // Helper function for absolute value
 abs :: proc(x: int) -> int {
 	return x >= 0 ? x : -x
@@ -1297,6 +1260,41 @@ get_level :: proc(level_number: int) -> Level {
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+			},
+			start_position = {4, 0},
+			end_position = {0, 5},
+			available_resources = {
+				path_tiles = 8,
+				dirt_tiles = 0,
+				hunting_ground = 2,
+				bridge_tiles = 0,
+			},
+			level_name = "Starting Off",
+			level_number = 0,
+		},
+		{
+			grid = [10][10]TileType {
+				{
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+				},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
@@ -1306,46 +1304,44 @@ get_level :: proc(level_number: int) -> Level {
 			start_position = {0, 0},
 			end_position = {9, 7},
 			available_resources = {
-				path_tiles = 15,
-				dirt_tiles = 5,
-				hunting_ground = 0,
+				path_tiles = 20,
+				dirt_tiles = 6,
+				hunting_ground = 1,
 				bridge_tiles = 0,
 			},
-			level_name = "Tutorial Level",
-			level_number = 0,
-		},
-		{
-			grid = [10][10]TileType {
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-			},
-			start_position = {0, 0},
-			end_position = {0, 5},
-			available_resources = {
-				path_tiles = 8,
-				dirt_tiles = 0,
-				hunting_ground = 0,
-				bridge_tiles = 0,
-			},
-			level_name = "Starting Off",
+			level_name = "Watch that fire",
 			level_number = 1,
 		},
 		{
 			grid = [10][10]TileType {
+				{
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Predator,
+				},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+				},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{
 					.Grass,
 					.Grass,
@@ -1366,7 +1362,7 @@ get_level :: proc(level_number: int) -> Level {
 			end_position = {9, 9},
 			available_resources = {
 				path_tiles = 20,
-				dirt_tiles = 0,
+				dirt_tiles = 5,
 				hunting_ground = 0,
 				bridge_tiles = 0,
 			},
@@ -1391,7 +1387,7 @@ get_level :: proc(level_number: int) -> Level {
 				{.Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
 				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass},
 				{
 					.Grass,
 					.Grass,
@@ -1412,12 +1408,104 @@ get_level :: proc(level_number: int) -> Level {
 			end_position = {2, 5},
 			available_resources = {
 				path_tiles = 10,
-				dirt_tiles = 5,
+				dirt_tiles = 6,
 				hunting_ground = 0,
 				bridge_tiles = 0,
 			},
 			level_name = "Dirt is your Friend",
 			level_number = 2,
+		},
+		{
+			grid = [10][10]TileType {
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+				},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{
+					.Grass,
+					.Predator,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+					.Predator,
+				},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+			},
+			start_position = {4, 0},
+			end_position = {4, 9},
+			available_resources = {
+				path_tiles = 16,
+				dirt_tiles = 0,
+				hunting_ground = 2,
+				bridge_tiles = 0,
+			},
+			level_name = "Send in the hunters",
+			level_number = 0,
+		},
+		{
+			grid = [10][10]TileType {
+				{.Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Fire},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Grass,
+					.Predator,
+				},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+					.Predator,
+					.Grass,
+					.Grass,
+				},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
+			},
+			start_position = {4, 4},
+			end_position = {9, 5},
+			available_resources = {
+				path_tiles = 8,
+				dirt_tiles = 3,
+				hunting_ground = 2,
+				bridge_tiles = 0,
+			},
+			level_name = "Rock and a hard place",
+			level_number = 0,
 		},
 	}
 	level_grid_copy = level[level_number]
@@ -1426,6 +1514,17 @@ get_level :: proc(level_number: int) -> Level {
 
 
 draw_level :: proc(level: Level, tile_size: int) {
+	// Draw level name on screen 
+	if current_game_state != .Tutorial {
+		rl.DrawText(
+			strings.clone_to_cstring(level.level_name),
+			screen_width / 2 - rl.MeasureText(strings.clone_to_cstring(level.level_name), 50),
+			10,
+			50,
+			rl.WHITE,
+		)
+	}
+
 
 	for row in 0 ..< 10 {
 		for col in 0 ..< 10 {
@@ -1452,26 +1551,21 @@ draw_level :: proc(level: Level, tile_size: int) {
 				rl.DrawTextureEx(sprite_assets.dirt, {rect.x, rect.y}, 0, 2, rl.WHITE)
 			case .Grass:
 				// color = rl.DARKGREEN
-				//rl.DrawRectangleRec(rect, color)
+				rl.DrawRectangleRec(rect, color)
 				rl.DrawTextureEx(sprite_assets.grass, {rect.x, rect.y}, 0, 2, rl.WHITE)
 			// Add some texture for grass
 
-			case .Meadow:
-				color = rl.GREEN
+			case .HuntZone:
+				color = rl.ORANGE
 				rl.DrawRectangleRec(rect, color)
+				rl.DrawTextureEx(sprite_assets.hunting_ground, {rect.x, rect.y}, 0, 2, rl.WHITE)
 			// Add flowers for meadow
 
 			case .Predator:
 				color = rl.RED
 				rl.DrawRectangleRec(rect, color)
-				// Add predator icon
-				rl.DrawText(
-					strings.clone_to_cstring("🐺"),
-					i32(rect.x) + 35,
-					i32(rect.y) + 30,
-					40,
-					rl.BLACK,
-				)
+				rl.DrawTextureEx(sprite_assets.predator, {rect.x, rect.y}, 0, 2, rl.WHITE)
+			// Add predator icon
 			case .Path:
 				// Path tiles with direction indicators
 				rl.DrawRectangleRec(rect, rl.GREEN)
@@ -1581,7 +1675,21 @@ place_tile :: proc() {
 						rl.DrawRectangleRec(rect, {255, 0, 0, 64})
 						rl.DrawRectangleLinesEx(rect, 3, rl.RED)
 					}
-					if rl.IsMouseButtonPressed(.LEFT) {
+					if selected_tile == .HuntZone {
+						if level[current_level].grid[row][col] != .Fire &&
+						   level[current_level].grid[row][col] != .Path &&
+						   !is_start &&
+						   !is_end {
+
+							rl.DrawRectangleRec(rect, {0, 255, 0, 64})
+							rl.DrawRectangleLinesEx(rect, 3, rl.GREEN)
+						} else {
+
+							rl.DrawRectangleRec(rect, {255, 0, 0, 64})
+							rl.DrawRectangleLinesEx(rect, 3, rl.RED)
+						}
+					}
+					if rl.IsMouseButtonPressed(.LEFT) || rl.IsMouseButtonDown(.LEFT) {
 
 						// TODO: Add different tiles that can be placed such as dirt etc. 
 						#partial switch selected_tile {
@@ -1595,6 +1703,7 @@ place_tile :: proc() {
 									}
 									if level[current_level].grid[row][col] != .Fire &&
 									   level[current_level].grid[row][col] != .Predator &&
+									   level[current_level].grid[row][col] != .HuntZone &&
 									   !is_start &&
 									   !is_end {
 
@@ -1616,12 +1725,26 @@ place_tile :: proc() {
 								if level[current_level].grid[row][col] != .Fire &&
 								   level[current_level].grid[row][col] != .Predator &&
 								   !is_start &&
-								   !is_end {
+								   !is_end &&
+								   level[current_level].grid[row][col] != .Dirt {
 									level[current_level].available_resources.dirt_tiles -= 1
 									level[current_level].grid[row][col] = selected_tile
 								}
 							}
 							break
+
+						case .HuntZone:
+							if level[current_level].available_resources.hunting_ground > 0 {
+
+								if level[current_level].grid[row][col] != .Fire &&
+								   level[current_level].grid[row][col] != .Grass &&
+								   !is_start &&
+								   !is_end &&
+								   level[current_level].grid[row][col] != .HuntZone {
+									level[current_level].available_resources.hunting_ground -= 1
+									level[current_level].grid[row][col] = selected_tile
+								}
+							}
 
 						}
 
@@ -1630,7 +1753,7 @@ place_tile :: proc() {
 				}
 				validate_path()
 
-				if rl.IsMouseButtonPressed(.RIGHT) {
+				if rl.IsMouseButtonPressed(.RIGHT) || rl.IsMouseButtonDown(.RIGHT) {
 					tile_type := level[current_level].grid[row][col]
 					if tile_type == .Path {
 						idx := find_path_tile_index(row, col)
@@ -1641,6 +1764,17 @@ place_tile :: proc() {
 							level[current_level].grid[row][col] = level_grid_copy.grid[row][col]
 							validate_path()
 						}
+					}
+					if tile_type == .Dirt {
+						level[current_level].available_resources.dirt_tiles += 1
+
+						level[current_level].grid[row][col] = level_grid_copy.grid[row][col]
+						validate_path()
+					}
+					if tile_type == .HuntZone {
+						level[current_level].available_resources.hunting_ground += 1
+
+						level[current_level].grid[row][col] = level_grid_copy.grid[row][col]
 					}
 				}
 			}
@@ -1674,9 +1808,27 @@ draw_side_bar :: proc() {
 	rl.DrawText(strings.clone_to_cstring("RESOURCES:"), 20, 70, 18, rl.DARKBLUE)
 
 	// Draw available path tiles
-	path_text := fmt.tprintf("Path Tiles: %d", level[current_level].available_resources.path_tiles)
-	rl.DrawText(strings.clone_to_cstring(path_text), 30, 100, 16, rl.BLACK)
-
+	#partial switch selected_tile {
+	case .Path:
+		path_text := fmt.tprintf("Tiles: %d", level[current_level].available_resources.path_tiles)
+		rl.DrawText(strings.clone_to_cstring(path_text), 30, 100, 16, rl.BLACK)
+		break
+	case .Dirt:
+		path_text := fmt.tprintf("Tiles: %d", level[current_level].available_resources.dirt_tiles)
+		rl.DrawText(strings.clone_to_cstring(path_text), 30, 100, 16, rl.BLACK)
+		break
+	case .HuntZone:
+		path_text := fmt.tprintf(
+			"Tiles: %d",
+			level[current_level].available_resources.hunting_ground,
+		)
+		rl.DrawText(strings.clone_to_cstring(path_text), 30, 100, 16, rl.BLACK)
+		break
+	case:
+		path_text := fmt.tprintf("Tiles: %d", level[current_level].available_resources.path_tiles)
+		rl.DrawText(strings.clone_to_cstring(path_text), 30, 100, 16, rl.BLACK)
+		break
+	}
 	// Visual indicators for resources
 	resources_y := i32(130)
 	#partial switch selected_tile {
@@ -1701,6 +1853,16 @@ draw_side_bar :: proc() {
 			rl.DrawRectangle(x_pos, y_pos, 20, 20, rl.BROWN)
 			rl.DrawRectangleLines(x_pos, y_pos, 20, 20, rl.YELLOW)
 		}
+	case .HuntZone:
+		for i in 0 ..< level[current_level].available_resources.hunting_ground {
+			if i >= 10 { 	// Show max 10 indicators to avoid clutter
+				break
+			}
+			x_pos := 30 + (i % 5) * 30
+			y_pos := resources_y + (i / 5) * 30
+			rl.DrawRectangle(x_pos, y_pos, 20, 20, rl.ORANGE)
+			rl.DrawRectangleLines(x_pos, y_pos, 20, 20, rl.YELLOW)
+		}
 	}
 	rl.DrawText(strings.clone_to_cstring("SELECT TILE:"), 20, 200, 18, rl.DARKBLUE)
 
@@ -1717,8 +1879,22 @@ draw_side_bar :: proc() {
 	rl.DrawText(strings.clone_to_cstring("Path"), 115, 245, 16, rl.BLACK)
 
 	//
+	rl.DrawText(strings.clone_to_cstring("Dirt"), 115, 345, 16, rl.BLACK)
 	dirt := rl.Rectangle{50, 330, 50, 50}
 
+
+	hunt_zone := rl.Rectangle{50, 430, 50, 50}
+	rl.DrawText(strings.clone_to_cstring("PREDATOR"), 115, 445, 14, rl.BLACK)
+	rl.DrawText(strings.clone_to_cstring("REMOVER"), 115, 459, 14, rl.BLACK)
+
+	if selected_tile == .HuntZone {
+		rl.DrawRectangleRec(hunt_zone, rl.ORANGE)
+		rl.DrawRectangleLinesEx(dirt, 3, rl.GOLD)
+	} else {
+
+		rl.DrawRectangleRec(hunt_zone, rl.ORANGE)
+		rl.DrawRectangleLinesEx(grass, 1, rl.BLACK)
+	}
 	if selected_tile == .Dirt {
 		rl.DrawRectangleRec(dirt, rl.BROWN)
 		rl.DrawRectangleLinesEx(dirt, 3, rl.GOLD)
@@ -1736,10 +1912,12 @@ draw_side_bar :: proc() {
 	if rl.CheckCollisionPointRec(mouse_pos, dirt) && rl.IsMouseButtonPressed(.LEFT) {
 		selected_tile = .Dirt
 	}
-
+	if rl.CheckCollisionPointRec(mouse_pos, hunt_zone) && rl.IsMouseButtonPressed(.LEFT) {
+		selected_tile = .HuntZone
+	}
 
 	// === INSTRUCTIONS SECTION ===
-	rl.DrawText(strings.clone_to_cstring("HELP:"), 20, 420, 18, rl.DARKBLUE)
+	rl.DrawText(strings.clone_to_cstring("HELP:"), 20, 520, 18, rl.DARKBLUE)
 
 	instructions := []string {
 		"LEFT CLICK: Place tile",
@@ -1750,60 +1928,21 @@ draw_side_bar :: proc() {
 	}
 
 	for instruction, idx in instructions {
-		rl.DrawText(
-			strings.clone_to_cstring(instruction),
-			30,
-			450 + i32(idx * 30),
-			14,
-			rl.DARKGRAY,
-		)
+		rl.DrawText(strings.clone_to_cstring(instruction), 30, 550 + i32(idx * 30), 12, rl.BLACK)
 	}
 
-	// === CURRENTLY SELECTED INDICATOR ===
-	if selected_tile != nil {
-		selected_text := "Currently selected:"
-		rl.DrawText(strings.clone_to_cstring(selected_text), 20, 620, 16, rl.BLACK)
-
-		// Draw the selected tile preview
-		preview_rect := rl.Rectangle{f32(width / 2 - 25), 650, 50, 50}
-		#partial switch selected_tile {
-		case .Path:
-			rl.DrawRectangleRec(preview_rect, rl.GREEN)
-			rl.DrawText(strings.clone_to_cstring("Path"), width / 2 - 20, 610, 16, rl.BLACK)
-		case .Dirt:
-			rl.DrawRectangleRec(preview_rect, rl.BROWN)
-			rl.DrawText(strings.clone_to_cstring("Dirt"), width / 2 - 20, 610, 16, rl.BLACK)
-		case .HuntZone:
-			rl.DrawRectangleRec(preview_rect, rl.BLUE)
-			rl.DrawText(strings.clone_to_cstring("Hunt"), width / 2 - 20, 610, 16, rl.BLACK)
-		case .Bridge:
-			rl.DrawRectangleRec(preview_rect, rl.BEIGE)
-			rl.DrawText(strings.clone_to_cstring("Bridge"), width / 2 - 25, 610, 16, rl.BLACK)
-		}
-
-		// Draw cursor indicator when hovering over the grid
-		if mouse_pos.x > 250 {
-			rl.DrawRectangle(
-				i32(mouse_pos.x - 25),
-				i32(mouse_pos.y - 25),
-				50,
-				50,
-				{0, 255, 0, 128}, // Semi-transparent green
-			)
-		}
-	}
 
 	if is_path_valid {
-		rl.DrawText(strings.clone_to_cstring("Path is VALID"), 20, height - 260, 20, rl.GREEN)
+		rl.DrawText(strings.clone_to_cstring("Path is VALID"), 20, height - 220, 20, rl.GREEN)
 		rl.DrawText(
 			strings.clone_to_cstring("Press SPACE to start"),
 			20,
-			height - 335,
+			height - 200,
 			16,
 			rl.DARKGREEN,
 		)
 	} else {
-		rl.DrawText(strings.clone_to_cstring("Path is INVALID"), 20, height - 260, 20, rl.RED)
+		rl.DrawText(strings.clone_to_cstring("Path is INVALID"), 20, height - 220, 20, rl.RED)
 		rl.DrawText(
 			strings.clone_to_cstring("Connect to start & end!"),
 			20,
@@ -1868,7 +2007,16 @@ spread_fire :: proc() {
 	new_fire_tiles: [dynamic]PathTile
 
 	for fire in fire_tiles {
-		directions := [][2]int{{0, 1}, {1, 0}, {0, -1}, {-1, 0}}
+		directions := [][2]int {
+			{0, 1},
+			{1, 0},
+			{0, -1},
+			{-1, 0},
+			{1, 1},
+			{-1, 1},
+			{1, -1},
+			{-1, -1},
+		}
 
 		for dir in directions {
 			next_row := fire.row + dir[0]
@@ -1880,7 +2028,7 @@ spread_fire :: proc() {
 
 			tile := level[current_level].grid[next_row][next_col]
 
-			if (tile == .Grass || tile == .Meadow) && rand.float32() < fire_spread_chance {
+			if (tile == .Grass || tile == .Path) && rand.float32() < fire_spread_chance {
 				append(&new_fire_tiles, PathTile{row = next_row, col = next_col})
 			}
 		}
@@ -1904,17 +2052,17 @@ draw_game_status :: proc() {
 		bg_color := player_won ? rl.GREEN : rl.RED
 		text_color := rl.WHITE
 
-		rl.DrawRectangle(300, 250, 680, 220, {bg_color.r, bg_color.g, bg_color.b, 200})
+		rl.DrawRectangle(400, 250, 680, 220, {bg_color.r, bg_color.g, bg_color.b, 200})
 
 		status_text := player_won ? "LEVEL COMPLETE!" : "GAME OVER"
 		rl.DrawText(strings.clone_to_cstring(status_text), 420, 280, 40, text_color)
 
-		rl.DrawText(strings.clone_to_cstring(game_over_reason), 340, 340, 30, text_color)
+		rl.DrawText(strings.clone_to_cstring(game_over_reason), 420, 340, 30, text_color)
 
 		rl.DrawText(strings.clone_to_cstring("Press 'R' to restart"), 440, 400, 20, text_color)
 	} else if is_animating {
 		turn_text := fmt.tprintf("TURN %d", current_turn)
-		rl.DrawText(strings.clone_to_cstring(turn_text), 550, 50, 40, rl.WHITE)
+		rl.DrawText(strings.clone_to_cstring(turn_text), 450, 50, 40, rl.WHITE)
 	}
 }
 
@@ -1922,15 +2070,12 @@ draw_game_status :: proc() {
 process_turn_end :: proc() {
 	current_turn += 1
 
-	// Check for adjacent danger tiles
 	check_adjacent_dangers()
 
-	// If game is already over, don't process further
 	if game_over {
 		return
 	}
 
-	// Spread fire
 	spread_fire()
 }
 
@@ -1980,9 +2125,21 @@ draw_end_screen :: proc() {
 
 }
 
+play_audio: bool
+
+initialize_audio :: proc() {
+	audio_init = true
+	rl.InitAudioDevice()
+
+	game_music = rl.LoadMusicStream("assets/chunky_monkey_shuffle.mp3")
+
+
+}
+
 update :: proc() {
 	screen_width = rl.GetScreenWidth()
 	screen_height = rl.GetScreenHeight()
+
 
 	current_time := f32(rl.GetTime())
 	rl.SetShaderValue(shaders.crt_effect, shaders.crt_time_loc, &current_time, .FLOAT)
@@ -1999,30 +2156,45 @@ update :: proc() {
 	rl.BeginTextureMode(target)
 	rl.ClearBackground(rl.BLACK)
 
+	if play_audio {
+		if !rl.IsMusicStreamPlaying(game_music) {
+			rl.PlayMusicStream(game_music)
+		}
+		if rl.IsMusicStreamPlaying(game_music) {
+			rl.UpdateMusicStream(game_music)
+		}
+	}
+
 	screen_mouse_pos := rl.GetMousePosition()
+	play_audio_rect := rl.Rectangle {
+		x      = f32(screen_width / 2 - 100),
+		y      = f32(screen_height / 2 + 150),
+		width  = 200,
+		height = 60,
+	}
+
+	button_color := play_audio ? rl.GREEN : rl.DARKGREEN
+
 
 	update_animations()
 
 	#partial switch current_game_state {
 	case .Tutorial:
 		rl.ClearBackground({0, 100, 50, 255})
-
 		rl.BeginMode2D(camera)
 		mouse_pos = rl.GetScreenToWorld2D(screen_mouse_pos, camera)
 
-		if rl.IsKeyPressed(.ESCAPE) || rl.IsMouseButtonPressed(.RIGHT) {
+		if rl.IsKeyPressed(.ESCAPE) {
 			selected_tile = nil
 		}
 
-		draw_level(level[current_level], TILE_SIZE)
+		draw_level(level[1], TILE_SIZE)
 		draw_side_bar()
 
-		highlight_path()
 		place_tile()
 		handle_animation_controls()
 		animate_player()
 
-		update_and_draw_tile_effects()
 		draw_game_status()
 
 		update_tutorial()
@@ -2046,9 +2218,36 @@ update :: proc() {
 			}
 		}
 		rl.EndMode2D()
+
 	case .Title_Screen:
 		mouse_pos = rl.GetMousePosition()
 		draw_title_screen()
+		rl.DrawRectangleRec(play_audio_rect, button_color)
+		rl.DrawRectangleLinesEx(play_audio_rect, 2.0, rl.WHITE)
+
+		audio_text := play_audio ? "MUSIC: ON" : "MUSIC: OFF"
+		text_width := rl.MeasureText(strings.clone_to_cstring(audio_text), 20)
+		rl.DrawText(
+			strings.clone_to_cstring(audio_text),
+			i32(play_audio_rect.x) + i32(play_audio_rect.width) / 2 - text_width / 2,
+			i32(play_audio_rect.y) + 20,
+			20,
+			rl.WHITE,
+		)
+
+		if rl.CheckCollisionPointRec(screen_mouse_pos, play_audio_rect) {
+			if rl.IsMouseButtonPressed(.LEFT) {
+
+				play_audio = !play_audio
+
+				if !audio_init {
+					initialize_audio()
+				}
+
+
+			}
+		}
+
 
 	case .Instructions_Screen:
 		mouse_pos = rl.GetMousePosition()
@@ -2056,25 +2255,73 @@ update :: proc() {
 
 	case .Gameplay:
 		rl.ClearBackground({0, 120, 153, 255})
-		// render_trippy_background()
 		rl.BeginMode2D(camera)
 		mouse_pos = rl.GetScreenToWorld2D(screen_mouse_pos, camera)
 
-		if rl.IsKeyPressed(.ESCAPE) || rl.IsMouseButtonPressed(.RIGHT) {
+		start_button := rl.Rectangle{225, 625, 200, 50}
+		start_text_width := rl.MeasureText("START SIMULATION", 18)
+		rl.DrawRectangleRec(start_button, rl.DARKGREEN)
+		rl.DrawRectangleLinesEx(start_button, 2.0, rl.WHITE)
+		rl.DrawText(
+			"START SIMULATION",
+			i32(start_button.x) + i32(start_button.width) / 2 - start_text_width / 2,
+			i32(start_button.y) + 20,
+			18,
+			rl.WHITE,
+		)
+
+		if rl.CheckCollisionPointRec(mouse_pos, start_button) && rl.IsMouseButtonPressed(.LEFT) {
+			start_animation()
+
+		}
+
+		if rl.IsKeyPressed(.ESCAPE) {
 			selected_tile = nil
 		}
 
+		play_audio_rect = {225, 700, 200, 50}
+		rl.DrawRectangleRec(play_audio_rect, button_color)
+		rl.DrawRectangleLinesEx(play_audio_rect, 2.0, rl.WHITE)
+
+		audio_text := play_audio ? "MUSIC: ON" : "MUSIC: OFF"
+		text_width := rl.MeasureText(strings.clone_to_cstring(audio_text), 20)
+		rl.DrawText(
+			strings.clone_to_cstring(audio_text),
+			i32(play_audio_rect.x) + i32(play_audio_rect.width) / 2 - text_width / 2,
+			i32(play_audio_rect.y) + 20,
+			20,
+			rl.WHITE,
+		)
+
+		if rl.CheckCollisionPointRec(mouse_pos, play_audio_rect) {
+			if rl.IsMouseButtonPressed(.LEFT) {
+
+				play_audio = !play_audio
+
+				if !audio_init {
+					initialize_audio()
+				}
+
+
+			}
+		}
+
+
+		if rl.IsKeyPressed(.R) {
+			init_game_state()
+			init_player()
+			reset_level()
+			clear_dynamic_array(&placed_path_tiles)
+
+		}
 		draw_level(level[current_level], TILE_SIZE)
 		draw_side_bar()
 
-		highlight_path()
 		place_tile()
 		handle_animation_controls()
 		animate_player()
 
-		update_and_draw_tile_effects()
 		draw_game_status()
-		//render_trippy_background()
 
 		if game_over {
 			if rl.IsKeyPressed(.R) {
@@ -2088,27 +2335,32 @@ update :: proc() {
 				current_game_state = .Title_Screen
 			}
 
-			if rl.IsKeyPressed(.SPACE) {
-				init_game_state()
-				init_player()
-				reset_level()
-				clear_dynamic_array(&placed_path_tiles)
-				if current_level + 1 >= LEVEL_COUNT {
-					current_game_state = .EndGame
-					rl.EndMode2D()
-					rl.EndTextureMode()
-					return
+			if game_over_reason == "You've successfully reached the end!" {
+				selected_tile = nil
+				if rl.IsKeyPressed(.SPACE) || rl.IsMouseButtonPressed(.LEFT) {
+					init_game_state()
+					reset_level()
+					clear_dynamic_array(&placed_path_tiles)
+					if current_level + 1 >= LEVEL_COUNT {
+						current_game_state = .EndGame
+						rl.EndMode2D()
+						rl.EndTextureMode()
+						return
+					}
+					get_level(current_level + 1)
+					init_player()
 				}
-				get_level(current_level + 1)
+
+				rl.DrawText(
+					strings.clone_to_cstring("Press Space or click to go to the next level"),
+					440,
+					430,
+					20,
+					rl.WHITE,
+				)
+
 			}
 
-			rl.DrawText(
-				strings.clone_to_cstring("Press Space to go to the next level"),
-				440,
-				430,
-				20,
-				rl.WHITE,
-			)
 		}
 		rl.EndMode2D()
 
@@ -2118,14 +2370,12 @@ update :: proc() {
 
 	rl.EndTextureMode()
 
-	// Now draw the render texture to the screen with the CRT shader
 	rl.BeginDrawing()
 	rl.ClearBackground(rl.BLACK)
 
 	// Apply the CRT effect shader when drawing the render texture
 	rl.BeginShaderMode(shaders.crt_effect)
 
-	// Draw the render texture flipped (raylib textures are y-flipped)
 	rl.DrawTextureRec(
 		target.texture,
 		{0, 0, f32(target.texture.width), -f32(target.texture.height)},
@@ -2139,41 +2389,6 @@ update :: proc() {
 	// Anything allocated using temp allocator is invalid after this.
 	free_all(context.temp_allocator)
 }
-
-render_trippy_background :: proc() {
-	// Update shader time uniform
-	current_time := f32(rl.GetTime())
-	rl.SetShaderValue(shaders.trippy_background, shaders.trippy_time_loc, &current_time, .FLOAT)
-
-	// First, render a simple gradient to the background texture
-	rl.BeginTextureMode(background_texture)
-
-	// Draw a gradient or some base pattern for the shader to distort
-	rl.DrawRectangleGradientV(
-		0,
-		0,
-		i32(background_texture.texture.width),
-		i32(background_texture.texture.height),
-		{80, 40, 120, 255}, // Dark purple
-		{20, 60, 100, 255},
-	) // Dark blue
-
-	rl.EndTextureMode()
-
-	// Then draw the background with the trippy shader
-	rl.BeginShaderMode(shaders.trippy_background)
-
-	// Draw the background texture (flipped since raylib textures are y-flipped)
-	rl.DrawTextureRec(
-		background_texture.texture,
-		{0, 0, f32(background_texture.texture.width), -f32(background_texture.texture.height)},
-		{0, 0},
-		rl.WHITE,
-	)
-
-	rl.EndShaderMode()
-}
-
 
 draw_tutorial_button :: proc() {
 	// Draw tutorial button below the start button
@@ -2189,34 +2404,6 @@ draw_tutorial_button :: proc() {
 		height = f32(tutorial_button_height),
 	}
 
-	create_tutorial_level :: proc() -> Level {
-		tutorial_level := Level {
-			grid = [10][10]TileType {
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Fire, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-				{.Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass, .Grass},
-			},
-			start_position = {0, 2},
-			end_position = {9, 7},
-			available_resources = {
-				path_tiles = 15,
-				dirt_tiles = 5,
-				hunting_ground = 0,
-				bridge_tiles = 0,
-			},
-			level_name = "Tutorial Level",
-			level_number = 0,
-		}
-
-		return tutorial_level
-	}
 
 	// Draw button background
 	tutorial_button_color := rl.DARKBLUE
@@ -2227,8 +2414,8 @@ draw_tutorial_button :: proc() {
 		if rl.IsMouseButtonPressed(.LEFT) {
 			// Start the tutorial
 			current_game_state = .Tutorial
-			current_level = 0
-			level_grid_copy = level[0]
+			current_level = 1
+			level_grid_copy = level[1]
 			init_game_state()
 			init_player()
 			init_path_tiles()
@@ -2253,6 +2440,8 @@ draw_tutorial_button :: proc() {
 
 window_resize_callback :: proc() {
 	update_render_target = true
+
+
 }
 
 // Modify your init procedure to initialize the game state
@@ -2261,14 +2450,17 @@ init :: proc() {
 	rl.SetTargetFPS(60)
 	rl.SetConfigFlags({.WINDOW_RESIZABLE, .VSYNC_HINT})
 	rl.InitWindow(1280, 720, "Deer Path - A Survival Journey")
-	level = get_level(0)
 	init_shaders()
+	get_level(0)
 	target = rl.LoadRenderTexture(1280, 720)
 	background_texture = rl.LoadRenderTexture(1280, 720)
 	init_camera()
 
 
-	// Initialize game to title screen
+	// game_music = rl.LoadSound("../assets/chunky_monkey_shuffle.mp3")
+
+	play_audio = false
+
 	current_game_state = .Title_Screen
 	load_sprites()
 }
@@ -2282,7 +2474,14 @@ shutdown :: proc() {
 
 parent_window_size_changed :: proc(w, h: int) {
 	rl.SetWindowSize(c.int(w), c.int(h))
-	update_render_target = true // Mark for render target update
+	screen_height = i32(h)
+	screen_width = i32(w)
+	update_render_target = true
+
+	offset_x = f32(w / 4) + f32(TILE_SIZE / 5)
+	offset_y = f32(h / 4) - f32(TILE_SIZE * 5) + 20
+
+
 }
 
 should_run :: proc() -> bool {
