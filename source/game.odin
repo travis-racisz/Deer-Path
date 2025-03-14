@@ -617,7 +617,6 @@ unload_shaders :: proc() {
 find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]PathTile {
 	result_path := make([dynamic]PathTile)
 
-	fmt.println("Looking for path from", start_row, start_col, "to", end_row, end_col)
 
 	q: queue.Queue(PathTile)
 	queue.init(&q)
@@ -640,7 +639,6 @@ find_path_bfs :: proc(start_row, start_col, end_row, end_col: int) -> [dynamic]P
 
 		if current.row == end_row && current.col == end_col {
 			found_path = true
-			fmt.println("Found path to end!")
 
 			path_tile := current
 			for path_tile.row != start_row || path_tile.col != start_col {
@@ -1107,7 +1105,6 @@ init_player :: proc() {
 	free_all()
 }
 start_animation :: proc() {
-	fmt.println("STARTING ANIMATION")
 	if is_path_valid && !is_animating && !animation_done {
 		start_row := int(level[current_level].start_position.y)
 		start_col := int(level[current_level].start_position.x)
@@ -1196,7 +1193,6 @@ animate_player :: proc() {
 				player_won = true
 				game_over = true
 				game_over_reason = "You've successfully reached the end!"
-				fmt.println("Player won! Level complete!")
 				free(&movement_path)
 			} else {
 				start_next_move()
